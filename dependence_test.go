@@ -129,3 +129,29 @@ func TestDependenceError(t *testing.T) {
 		t.Fatal()
 	}
 }
+
+func TestAncestor(t *testing.T) {
+	var d Dependencies
+	err := d.Provide(func() uint {
+		return 1
+	}, func(u uint, i int) float64 {
+		return float64(u) + float64(i)
+	}, func(n uint) int {
+		return int(n + 1)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = d.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f float64
+	err = d.Inject(&f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f != 3 {
+		t.Fatal()
+	}
+}

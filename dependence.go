@@ -3,6 +3,7 @@ package goapp
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"sync"
 	"unicode"
 )
@@ -42,6 +43,14 @@ func (d *dependence) notExistError(provider string) error {
 	return fmt.Errorf("dependence %s not found for provider %s", n, provider)
 }
 
+func (d *dependence) notInitializedError(provider string) error {
+	n := d.String()
+	if provider == "" {
+		return fmt.Errorf("dependence %s not initialized", n)
+	}
+	return fmt.Errorf("dependence %s not initialized for provider %s", n, provider)
+}
+
 func (d *dependence) matchModule(modules []*module) *module {
 	l := len(modules)
 	if l == 0 {
@@ -70,6 +79,9 @@ func (d dependence) Parse(mods moduleMap) (reflect.Value, error) {
 	m := d.matchModuleMap(mods)
 	if m == nil {
 		return reflect.Value{}, d.notExistError("")
+	}
+	if !m.Val.IsValid() {
+		return reflect.Value{}, d.notInitializedError("")
 	}
 	return m.Val, nil
 }
@@ -376,89 +388,103 @@ func (d *Dependencies) runProvider(p *provider) error {
 	return nil
 }
 
-type graphNode struct {
+type queueNode struct {
 	provider *provider
-	children []*graphNode
-	depAdded bool
+	weight   int
+
+	parentInQueue bool
 }
 
-func (d *Dependencies) addToGraph(root *graphNode, nodes map[*provider]*graphNode, p *provider, context []string, forDep string) (*graphNode, error) {
+func (d *Dependencies) searchByProvider(queue []*queueNode, p *provider) *queueNode {
+	for _, n := range queue {
+		if n.provider == p {
+			return n
+		}
+	}
+	return nil
+}
+
+func (d *Dependencies) addToQueue(queue []*queueNode, p *provider, context []string) ([]*queueNode, *queueNode, error) {
+	node := d.searchByProvider(queue, p)
 	if p.done() {
-		return nil, nil
+		return queue, node, nil
 	}
 
-	node := nodes[p]
 	if node != nil {
-		if node.depAdded {
-			return node, nil
+		if node.parentInQueue {
+			return queue, node, nil
 		}
 		context = append(context, p.name)
-		return nil, fmt.Errorf("cycle dependencies: %v", context)
+		return nil, nil, fmt.Errorf("cycle dependencies: %v", context)
 	}
 
 	context = append(context, p.name)
-	node = &graphNode{
+	node = &queueNode{
 		provider: p,
-		depAdded: len(p.deps) == 0,
+		weight:   1,
 	}
-	nodes[p] = node
-	if node.depAdded {
-		root.children = append(root.children, node)
-	} else {
-		var hasDep bool
-		for _, dep := range p.deps {
-			mod := dep.matchModuleMap(d.modules)
-			if mod == nil {
-				return nil, dep.notExistError(p.name)
-			}
-			parent, err := d.addToGraph(root, nodes, mod.Provider, context, dep.String())
-			if err != nil {
-				return nil, err
-			}
-			if parent != nil {
-				parent.children = append(parent.children, node)
-				hasDep = true
-			}
+	queue = append(queue, node)
+	var (
+		parent *queueNode
+		err    error
+	)
+	for _, dep := range p.deps {
+		mod := dep.matchModuleMap(d.modules)
+		if mod == nil {
+			return nil, nil, dep.notExistError(p.name)
 		}
-		if !hasDep {
-			root.children = append(root.children, node)
+		queue, parent, err = d.addToQueue(queue, mod.Provider, context)
+		if err != nil {
+			return nil, nil, err
 		}
-		node.depAdded = true
+		if parent != nil {
+			node.weight += parent.weight
+		}
 	}
-	return node, nil
+	node.parentInQueue = true
+	return queue, node, nil
 }
 
-func (d *Dependencies) buildGraph() (graphNode, error) {
+type sortbyWeight []*queueNode
+
+func (s sortbyWeight) Len() int {
+	return len(s)
+}
+
+func (s sortbyWeight) Less(i, j int) bool {
+	return s[i].weight < s[j].weight
+}
+
+func (s sortbyWeight) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func (d *Dependencies) buildQueue() ([]*queueNode, error) {
 	var (
-		root  graphNode
-		nodes = make(map[*provider]*graphNode)
+		// queue must be slice of node pointer for append may allocate another memory.
+		queue []*queueNode
+		err   error
 	)
 	for _, p := range d.providers {
-		_, err := d.addToGraph(&root, nodes, p, nil, "")
+		queue, _, err = d.addToQueue(queue, p, nil)
 		if err != nil {
-			return root, err
+			return nil, err
 		}
 	}
-	return root, nil
+	sort.Sort(sortbyWeight(queue))
+	return queue, nil
 }
 
 func (d *Dependencies) Run() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	g, err := d.buildGraph()
+	queue, err := d.buildQueue()
 	if err != nil {
 		return err
 	}
-	queue := append([]*graphNode{}, g.children...)
-	for l := len(queue); l > 0; {
-		node := queue[0]
-		copy(queue, queue[1:])
-		queue = queue[:l-1]
-		l -= 1
-		queue = append(queue, node.children...)
-		l += len(node.children)
-		err = d.runProvider(node.provider)
+	for _, n := range queue {
+		err = d.runProvider(n.provider)
 		if err != nil {
 			return err
 		}
