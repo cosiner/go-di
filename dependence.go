@@ -51,28 +51,28 @@ func (d *dependence) notInitializedError(provider string) error {
 	return fmt.Errorf("dependence %s not initialized for provider %s", n, provider)
 }
 
-func (d *dependence) matchModule(modules []*module) *module {
+func (d *dependence) matchModuleMap(m moduleMap) *module {
+	modules := m[d.Type]
 	l := len(modules)
 	if l == 0 {
 		return nil
+	}
+	if l == 1 {
+		return modules[0]
 	}
 	var def *module
 	for _, mod := range modules {
 		if mod.Type != d.Type {
 			continue
 		}
-		if mod.Var == "" {
-			def = mod
-		}
 		if mod.Var == d.Var {
 			return mod
 		}
+		if mod.Var == "" {
+			def = mod
+		}
 	}
 	return def
-}
-
-func (d *dependence) matchModuleMap(modules moduleMap) *module {
-	return d.matchModule(modules[d.Type])
 }
 
 func (d dependence) Parse(mods moduleMap) (reflect.Value, error) {
@@ -192,11 +192,40 @@ func (p *provider) markDone() {
 	p.fn = reflect.Value{}
 }
 
+type decomposable interface {
+	Decompose() interface{}
+}
+
+var decomposableReftype = reflect.TypeOf((*decomposable)(nil)).Elem()
+
+type decomposableValue struct {
+	Value interface{}
+}
+
+var _ decomposable = decomposableValue{}
+
+func (d decomposableValue) Decompose() interface{} {
+	return d.Value
+}
+
 type Dependencies struct {
 	providers []*provider
 	modules   moduleMap
 
 	mu sync.RWMutex
+}
+
+func NewDependencies() *Dependencies {
+	return &Dependencies{
+		modules: make(moduleMap),
+	}
+}
+
+func (d *Dependencies) Decompose(v interface{}) interface{} {
+	var dec decomposable = decomposableValue{
+		Value: v,
+	}
+	return dec
 }
 
 func (d *Dependencies) analyseStruct(t reflect.Type) ([]dependence, structDependencies) {
@@ -231,59 +260,80 @@ func (d *Dependencies) analyseStruct(t reflect.Type) ([]dependence, structDepend
 	return deps, s
 }
 
-func (d *Dependencies) analyseProvider(name string, v reflect.Value) (*provider, error) {
-	p := provider{
-		name:          name,
-		errorResolver: errorResolver{index: -1},
-	}
-	t := v.Type()
-	switch {
-	case v.Kind() == reflect.Func:
-		p.fn = v
+func (d *Dependencies) analyseFunc(t reflect.Type, v reflect.Value) (provider, error) {
+	var p provider
+	p.errorResolver.index = -1
+	p.name = functionName(v)
+	p.fn = v
 
-		l := t.NumIn()
-		p.deps = make([]dependence, 0, l)
-		for i := 0; i < l; i++ {
-			in := t.In(i)
-			if in.Kind() == reflect.Struct && in.Name() == "" {
-				ds, parser := d.analyseStruct(in)
-				p.deps = append(p.deps, ds...)
-				p.depParsers = append(p.depParsers, parser)
-			} else {
-				d := dependence{Type: in}
-				p.deps = append(p.deps, d)
-				p.depParsers = append(p.depParsers, d)
-			}
+	l := t.NumIn()
+	p.deps = make([]dependence, 0, l)
+	for i := 0; i < l; i++ {
+		in := t.In(i)
+		if in.Kind() == reflect.Struct && in.Name() == "" {
+			ds, parser := d.analyseStruct(in)
+			p.deps = append(p.deps, ds...)
+			p.depParsers = append(p.depParsers, parser)
+		} else {
+			d := dependence{Type: in}
+			p.deps = append(p.deps, d)
+			p.depParsers = append(p.depParsers, d)
 		}
+	}
 
-		l = t.NumOut()
-		p.provides = make([]*module, 0, l)
-		for i := 0; i < l; i++ {
-			out := t.Out(i)
-			if out.Kind() == reflect.Struct && out.Name() == "" {
-				ds, resolver := d.analyseStruct(out)
-				for _, d := range ds {
-					p.provides = append(p.provides, &module{
-						dependence: d,
-						Provider:   &p,
-					})
-				}
-				p.provideResolvers = append(p.provideResolvers, resolver)
-			} else if out != errorReftype {
-				d := dependence{Type: out}
+	l = t.NumOut()
+	p.provides = make([]*module, 0, l)
+	for i := 0; i < l; i++ {
+		out := t.Out(i)
+		if out.Kind() == reflect.Struct && out.Name() == "" {
+			ds, resolver := d.analyseStruct(out)
+			for _, d := range ds {
 				p.provides = append(p.provides, &module{
 					dependence: d,
 					Provider:   &p,
 				})
-				p.provideResolvers = append(p.provideResolvers, d)
-			} else {
-				if p.errorResolver.index >= 0 {
-					return nil, fmt.Errorf("provider returned more than one error: %s", name)
-				}
-				p.errorResolver.index = i
 			}
+			p.provideResolvers = append(p.provideResolvers, resolver)
+		} else if out != errorReftype {
+			d := dependence{Type: out}
+			p.provides = append(p.provides, &module{
+				dependence: d,
+				Provider:   &p,
+			})
+			p.provideResolvers = append(p.provideResolvers, d)
+		} else {
+			if p.errorResolver.index >= 0 {
+				return p, fmt.Errorf("provider returned more than one error: %s", p.name)
+			}
+			p.errorResolver.index = i
 		}
-	case v.Kind() == reflect.Struct && t.Name() == "":
+	}
+	return p, nil
+}
+
+func (d *Dependencies) analyseProvider(pr interface{}) (*provider, error) {
+	v := reflect.ValueOf(pr)
+	t := v.Type()
+
+	var decomposed bool
+	if t.Implements(decomposableReftype) {
+		decomposed = true
+		pr = v.Interface().(decomposable).Decompose()
+		v = reflect.ValueOf(pr)
+		t = v.Type()
+	}
+
+	p := provider{
+		errorResolver: errorResolver{index: -1},
+	}
+	switch {
+	case v.Kind() == reflect.Func:
+		fp, err := d.analyseFunc(t, v)
+		if err != nil {
+			return nil, err
+		}
+		p = fp
+	case v.Kind() == reflect.Struct && (decomposed || t.Name() == ""):
 		ds, resolver := d.analyseStruct(t)
 		for i, d := range ds {
 			p.provides = append(p.provides, &module{
@@ -328,23 +378,10 @@ func (d *Dependencies) registerProvider(p *provider) error {
 	return nil
 }
 
-func (d *Dependencies) providerName(f reflect.Value) string {
-	if f.Kind() != reflect.Func {
-		return ""
-	}
-	return functionName(f)
-}
-
-func (d *Dependencies) provide(fn interface{}) error {
-	v := reflect.ValueOf(fn)
-	p, err := d.analyseProvider(d.providerName(v), v)
+func (d *Dependencies) provide(provider interface{}) error {
+	p, err := d.analyseProvider(provider)
 	if err != nil {
 		return err
-	}
-	for _, d := range p.deps {
-		if matched := d.matchModule(p.provides); matched != nil {
-			return fmt.Errorf("dependencies and provides are conflicted， %s: %s", p.name, d.Type.String())
-		}
 	}
 	return d.registerProvider(p)
 }
@@ -492,10 +529,7 @@ func (d *Dependencies) Run() error {
 	return nil
 }
 
-func (d *Dependencies) Inject(v interface{}) error {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-
+func (d *Dependencies) inject(v interface{}) error {
 	refv := reflect.ValueOf(v)
 	if refv.Kind() != reflect.Ptr {
 		return fmt.Errorf("destination must be pointer")
@@ -513,4 +547,16 @@ func (d *Dependencies) Inject(v interface{}) error {
 	}
 	_, r := d.analyseStruct(dep.Type)
 	return r.Inject(refv, d.modules)
+}
+
+func (d *Dependencies) Inject(v ...interface{}) error {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	for _, p := range v {
+		err := d.inject(p)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
