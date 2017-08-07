@@ -192,17 +192,17 @@ func (p *provider) markDone() {
 	p.fn = reflect.Value{}
 }
 
-type decomposable interface {
+type DepDecomposable interface {
 	Decompose() interface{}
 }
 
-var decomposableReftype = reflect.TypeOf((*decomposable)(nil)).Elem()
+var decomposableReftype = reflect.TypeOf((*DepDecomposable)(nil)).Elem()
 
 type decomposableValue struct {
 	Value interface{}
 }
 
-var _ decomposable = decomposableValue{}
+var _ DepDecomposable = decomposableValue{}
 
 func (d decomposableValue) Decompose() interface{} {
 	return d.Value
@@ -222,7 +222,7 @@ func NewDependencies() *Dependencies {
 }
 
 func (d *Dependencies) Decompose(v interface{}) interface{} {
-	var dec decomposable = decomposableValue{
+	var dec DepDecomposable = decomposableValue{
 		Value: v,
 	}
 	return dec
@@ -318,7 +318,7 @@ func (d *Dependencies) analyseProvider(pr interface{}) (*provider, error) {
 	var decomposed bool
 	if t.Implements(decomposableReftype) {
 		decomposed = true
-		pr = v.Interface().(decomposable).Decompose()
+		pr = v.Interface().(DepDecomposable).Decompose()
 		v = reflect.ValueOf(pr)
 		t = v.Type()
 	}
