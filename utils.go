@@ -19,6 +19,8 @@ func trimAllPrefixByte(s string, b byte) string {
 }
 
 func functionName(val reflect.Value) string {
-	name := trimAllPrefixByte(runtime.FuncForPC(val.Pointer()).Name(), '/')
+	name := runtime.FuncForPC(val.Pointer()).Name()
+	name = trimAllPrefixByte(name, '/')
+	name = strings.TrimSuffix(name, "-fm")
 	return name
 }

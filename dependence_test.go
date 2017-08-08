@@ -205,3 +205,37 @@ func TestDecompose(t *testing.T) {
 		t.Fatal()
 	}
 }
+
+type methodProvider struct{}
+
+func (methodProvider) ProvideArr() []int {
+	return []int{1, 2, 3}
+}
+
+func (methodProvider) ProvideSum(arr []int) int {
+	var sum int
+	for _, n := range arr {
+		sum += n
+	}
+	return sum
+}
+
+func TestProvideMethods(t *testing.T) {
+	d := NewDependencies()
+	err := d.ProvideMethods(methodProvider{}, "Provide.*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = d.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sum int
+	err = d.Inject(&sum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum != 6 {
+		t.Fatal()
+	}
+}

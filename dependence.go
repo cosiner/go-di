@@ -3,6 +3,7 @@ package goapp
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
 	"sync"
 	"unicode"
@@ -260,10 +261,13 @@ func (d *Dependencies) analyseStruct(t reflect.Type) ([]dependence, structDepend
 	return deps, s
 }
 
-func (d *Dependencies) analyseFunc(t reflect.Type, v reflect.Value) (provider, error) {
+func (d *Dependencies) analyseFunc(name string, t reflect.Type, v reflect.Value) (provider, error) {
 	var p provider
 	p.errorResolver.index = -1
-	p.name = functionName(v)
+	p.name = name
+	if p.name == "" {
+		p.name = functionName(v)
+	}
 	p.fn = v
 
 	l := t.NumIn()
@@ -311,14 +315,13 @@ func (d *Dependencies) analyseFunc(t reflect.Type, v reflect.Value) (provider, e
 	return p, nil
 }
 
-func (d *Dependencies) analyseProvider(pr interface{}) (*provider, error) {
-	v := reflect.ValueOf(pr)
+func (d *Dependencies) analyseProvider(name string, v reflect.Value) (*provider, error) {
 	t := v.Type()
 
 	var decomposed bool
 	if t.Implements(decomposableReftype) {
 		decomposed = true
-		pr = v.Interface().(DepDecomposable).Decompose()
+		pr := v.Interface().(DepDecomposable).Decompose()
 		v = reflect.ValueOf(pr)
 		t = v.Type()
 	}
@@ -328,7 +331,7 @@ func (d *Dependencies) analyseProvider(pr interface{}) (*provider, error) {
 	}
 	switch {
 	case v.Kind() == reflect.Func:
-		fp, err := d.analyseFunc(t, v)
+		fp, err := d.analyseFunc(name, t, v)
 		if err != nil {
 			return nil, err
 		}
@@ -365,8 +368,8 @@ func (d *Dependencies) registerProvider(p *provider) error {
 	for i := range p.provides {
 		mod := p.provides[i]
 		mods := d.modules[mod.Type]
-		if pos, conflicted := d.hasConflict(mods, mod); conflicted {
-			return fmt.Errorf("provider conflicted: %s, %s, %s", pos, p.name, mod.Type.String())
+		if name, conflicted := d.hasConflict(mods, mod); conflicted {
+			return fmt.Errorf("provider conflicted: %s, %s, %s", name, p.name, mod.Type.String())
 		}
 		mods = append(mods, mod)
 		if d.modules == nil {
@@ -378,19 +381,48 @@ func (d *Dependencies) registerProvider(p *provider) error {
 	return nil
 }
 
-func (d *Dependencies) provide(provider interface{}) error {
-	p, err := d.analyseProvider(provider)
+func (d *Dependencies) provide(name string, provider reflect.Value) error {
+	p, err := d.analyseProvider(name, provider)
 	if err != nil {
 		return err
 	}
 	return d.registerProvider(p)
 }
 
+func (d *Dependencies) ProvideMethods(v interface{}, pattern string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if pattern == "" {
+		pattern = ".*"
+	}
+	matcher, err := regexp.Compile(pattern)
+	if err != nil {
+		return err
+	}
+
+	var (
+		refv = reflect.ValueOf(v)
+		reft = refv.Type()
+		l    = refv.Type().NumMethod()
+	)
+	for i := 0; i < l; i++ {
+		m := reft.Method(i)
+		if matcher.MatchString(m.Name) {
+			err = d.provide(functionName(m.Func), refv.Method(i))
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (d *Dependencies) Provide(v ...interface{}) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, arg := range v {
-		err := d.provide(arg)
+		err := d.provide("", reflect.ValueOf(arg))
 		if err != nil {
 			return err
 		}
