@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"unicode"
 )
 
@@ -219,10 +220,14 @@ type namedVal struct {
 var namedValReftype = reflect.TypeOf((*namedVal)(nil)).Elem()
 
 type Dependencies struct {
+	running uint32
+
+	mu        sync.RWMutex
 	providers []*provider
 	modules   moduleMap
 
-	mu sync.RWMutex
+	pendingMu        sync.RWMutex
+	pendingProviders []interface{}
 }
 
 func NewDependencies() *Dependencies {
@@ -443,15 +448,30 @@ func (d *Dependencies) ProvideMethods(v interface{}, pattern string) error {
 	return nil
 }
 
+func (d *Dependencies) clearPendingProviders(v []interface{}) []interface{} {
+	d.pendingMu.Lock()
+	v = append(v, d.pendingProviders...)
+	d.pendingProviders = nil
+	d.pendingMu.Unlock()
+	return v
+}
+
 func (d *Dependencies) Provide(v ...interface{}) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	for _, arg := range v {
-		nv := d.parseNamed(arg)
-		err := d.provide(nv.Var, reflect.ValueOf(nv.Val))
-		if err != nil {
-			return err
+	if atomic.LoadUint32(&d.running) == 0 {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+
+		for _, arg := range d.clearPendingProviders(v) {
+			nv := d.parseNamed(arg)
+			err := d.provide(nv.Var, reflect.ValueOf(nv.Val))
+			if err != nil {
+				return err
+			}
 		}
+	} else {
+		d.pendingMu.Lock()
+		d.pendingProviders = append(d.pendingProviders, v...)
+		d.pendingMu.Unlock()
 	}
 	return nil
 }
@@ -589,8 +609,24 @@ func (d *Dependencies) checkAllDeps() error {
 }
 
 func (d *Dependencies) Run() error {
+	if !atomic.CompareAndSwapUint32(&d.running, 0, 1) {
+		return errors.New("dependencies is already running")
+	}
+
 	d.mu.Lock()
-	defer d.mu.Unlock()
+	defer func() {
+		d.mu.Unlock()
+		atomic.StoreUint32(&d.running, 0)
+	}()
+
+	for _, p := range d.clearPendingProviders(nil) {
+		nv := d.parseNamed(p)
+		err := d.provide(nv.Var, reflect.ValueOf(nv.Val))
+		if err != nil {
+			return err
+		}
+	}
+
 	err := d.checkAllDeps()
 	if err != nil {
 		return err
