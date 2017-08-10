@@ -1,6 +1,8 @@
 package goapp
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -261,7 +263,7 @@ func (d *Dependencies) analyseStruct(t reflect.Type) ([]dependence, structDepend
 	return deps, s
 }
 
-func (d *Dependencies) analyseFunc(name string, t reflect.Type, v reflect.Value) (provider, error) {
+func (d *Dependencies) analyseFunc(name string, t reflect.Type, v reflect.Value) (*provider, error) {
 	var p provider
 	p.errorResolver.index = -1
 	p.name = name
@@ -307,12 +309,12 @@ func (d *Dependencies) analyseFunc(name string, t reflect.Type, v reflect.Value)
 			p.provideResolvers = append(p.provideResolvers, d)
 		} else {
 			if p.errorResolver.index >= 0 {
-				return p, fmt.Errorf("provider returned more than one error: %s", p.name)
+				return nil, fmt.Errorf("provider returned more than one error: %s", p.name)
 			}
 			p.errorResolver.index = i
 		}
 	}
-	return p, nil
+	return &p, nil
 }
 
 func (d *Dependencies) analyseProvider(name string, v reflect.Value) (*provider, error) {
@@ -326,7 +328,7 @@ func (d *Dependencies) analyseProvider(name string, v reflect.Value) (*provider,
 		t = v.Type()
 	}
 
-	p := provider{
+	p := &provider{
 		errorResolver: errorResolver{index: -1},
 	}
 	switch {
@@ -341,7 +343,7 @@ func (d *Dependencies) analyseProvider(name string, v reflect.Value) (*provider,
 		for i, d := range ds {
 			p.provides = append(p.provides, &module{
 				dependence: d,
-				Provider:   &p,
+				Provider:   p,
 				Val:        v.Field(resolver.fields[i].fieldIndex),
 			})
 		}
@@ -349,10 +351,10 @@ func (d *Dependencies) analyseProvider(name string, v reflect.Value) (*provider,
 		p.provides = append(p.provides, &module{
 			dependence: dependence{Type: t},
 			Val:        v,
-			Provider:   &p,
+			Provider:   p,
 		})
 	}
-	return &p, nil
+	return p, nil
 }
 
 func (d *Dependencies) hasConflict(mods []*module, mod *module) (string, bool) {
@@ -544,9 +546,31 @@ func (d *Dependencies) buildQueue() ([]*queueNode, error) {
 	return queue, nil
 }
 
+func (d *Dependencies) checkAllDeps() error {
+	var buf bytes.Buffer
+	for _, p := range d.providers {
+		if p.done() {
+			continue
+		}
+		for _, dep := range p.deps {
+			if dep.matchModuleMap(d.modules) == nil {
+				fmt.Fprintln(&buf, dep.notExistError(p))
+			}
+		}
+	}
+	if buf.Len() > 0 {
+		return errors.New(buf.String())
+	}
+	return nil
+}
+
 func (d *Dependencies) Run() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	err := d.checkAllDeps()
+	if err != nil {
+		return err
+	}
 
 	queue, err := d.buildQueue()
 	if err != nil {
