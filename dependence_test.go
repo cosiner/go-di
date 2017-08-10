@@ -239,3 +239,19 @@ func TestProvideMethods(t *testing.T) {
 		t.Fatal()
 	}
 }
+
+func TestInject(t *testing.T) {
+	d := NewDependencies()
+	d.Provide(d.Named("I1", 1), d.Named("I2", 2), d.Named("I3", 1))
+	d.Run()
+
+	var (
+		i1, i2, i3 int
+	)
+	t.Log(d.Inject(
+		d.Named("I1", &i1),
+		d.Named("I2", &i2),
+		d.Named("I3", &i3),
+	))
+	t.Log(i1, i2, i3)
+}

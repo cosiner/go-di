@@ -211,6 +211,13 @@ func (d decomposableValue) Decompose() interface{} {
 	return d.Value
 }
 
+type namedVal struct {
+	Val interface{}
+	Var string
+}
+
+var namedValReftype = reflect.TypeOf((*namedVal)(nil)).Elem()
+
 type Dependencies struct {
 	providers []*provider
 	modules   moduleMap
@@ -229,6 +236,22 @@ func (d *Dependencies) Decompose(v interface{}) interface{} {
 		Value: v,
 	}
 	return dec
+}
+
+func (d *Dependencies) Named(name string, v interface{}) interface{} {
+	return namedVal{
+		Var: name,
+		Val: v,
+	}
+}
+
+func (d *Dependencies) parseNamed(v interface{}) namedVal {
+	if nv, ok := v.(namedVal); ok {
+		return nv
+	}
+	return namedVal{
+		Val: v,
+	}
 }
 
 func (d *Dependencies) analyseStruct(t reflect.Type) ([]dependence, structDependencies) {
@@ -349,7 +372,7 @@ func (d *Dependencies) analyseProvider(name string, v reflect.Value) (*provider,
 		}
 	default:
 		p.provides = append(p.provides, &module{
-			dependence: dependence{Type: t},
+			dependence: dependence{Type: t, Var: name},
 			Val:        v,
 			Provider:   p,
 		})
@@ -424,7 +447,8 @@ func (d *Dependencies) Provide(v ...interface{}) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, arg := range v {
-		err := d.provide("", reflect.ValueOf(arg))
+		nv := d.parseNamed(arg)
+		err := d.provide(nv.Var, reflect.ValueOf(nv.Val))
 		if err != nil {
 			return err
 		}
@@ -554,7 +578,7 @@ func (d *Dependencies) checkAllDeps() error {
 		}
 		for _, dep := range p.deps {
 			if dep.matchModuleMap(d.modules) == nil {
-				fmt.Fprintln(&buf, dep.notExistError(p))
+				fmt.Fprintln(&buf, dep.notExistError(p.name))
 			}
 		}
 	}
@@ -585,7 +609,7 @@ func (d *Dependencies) Run() error {
 	return nil
 }
 
-func (d *Dependencies) inject(v interface{}) error {
+func (d *Dependencies) inject(name string, v interface{}) error {
 	refv := reflect.ValueOf(v)
 	if refv.Kind() != reflect.Ptr {
 		return fmt.Errorf("destination must be pointer")
@@ -593,12 +617,13 @@ func (d *Dependencies) inject(v interface{}) error {
 	refv = refv.Elem()
 	dep := dependence{
 		Type: refv.Type(),
+		Var:  name,
 	}
 	mod := dep.matchModuleMap(d.modules)
 	if mod != nil {
 		return dep.Inject(refv, d.modules)
 	}
-	if refv.Kind() != reflect.Struct {
+	if refv.Kind() != reflect.Struct || dep.Type.Name() != "" {
 		return dep.notExistError("")
 	}
 	_, r := d.analyseStruct(dep.Type)
@@ -609,7 +634,8 @@ func (d *Dependencies) Inject(v ...interface{}) error {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	for _, p := range v {
-		err := d.inject(p)
+		nv := d.parseNamed(p)
+		err := d.inject(nv.Var, nv.Val)
 		if err != nil {
 			return err
 		}
