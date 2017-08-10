@@ -226,7 +226,7 @@ type Dependencies struct {
 	providers []*provider
 	modules   moduleMap
 
-	pendingMu        sync.RWMutex
+	pendingMu        sync.Mutex
 	pendingProviders []interface{}
 }
 
@@ -619,27 +619,33 @@ func (d *Dependencies) Run() error {
 		atomic.StoreUint32(&d.running, 0)
 	}()
 
-	for _, p := range d.clearPendingProviders(nil) {
-		nv := d.parseNamed(p)
-		err := d.provide(nv.Var, reflect.ValueOf(nv.Val))
+	for {
+		err := d.checkAllDeps()
 		if err != nil {
 			return err
 		}
-	}
 
-	err := d.checkAllDeps()
-	if err != nil {
-		return err
-	}
-
-	queue, err := d.buildQueue()
-	if err != nil {
-		return err
-	}
-	for _, n := range queue {
-		err = d.runProvider(n.provider)
+		queue, err := d.buildQueue()
 		if err != nil {
 			return err
+		}
+		for _, n := range queue {
+			err = d.runProvider(n.provider)
+			if err != nil {
+				return err
+			}
+		}
+
+		providers := d.clearPendingProviders(nil)
+		if len(providers) == 0 {
+			break
+		}
+		for _, p := range providers {
+			nv := d.parseNamed(p)
+			err := d.provide(nv.Var, reflect.ValueOf(nv.Val))
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil

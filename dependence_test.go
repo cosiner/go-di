@@ -251,20 +251,14 @@ func TestInject(t *testing.T) {
 	var (
 		i1, i2, i3 int
 		f          float64
+		u8         uint8
 	)
 	t.Log(d.Inject(
 		d.Named("I1", &i1),
 		d.Named("I2", &i2),
 		d.Named("I3", &i3),
 		&f,
+		&u8,
 	))
-	t.Log(i1, i2, i3, f)
-
-	d.Provide(uint32(1))
-	d.Run()
-	var (
-		u8 uint8
-	)
-	d.Inject(&u8)
-	t.Log(u8)
+	t.Log(i1, i2, i3, f, u8)
 }
