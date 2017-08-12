@@ -1,4 +1,4 @@
-package goapp
+package di
 
 import (
 	"reflect"

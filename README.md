@@ -1,13 +1,12 @@
-# goapp
-goapp is a library for [Go](https://golang.org) help run application. 
+# go-di
+go-di is a library for [Go](https://golang.org) to do dependency injection. 
 
 # Documentation
-Documentation can be found at [Godoc](https://godoc.org/github.com/cosiner/goapp)
+Documentation can be found at [Godoc](https://godoc.org/github.com/cosiner/go-di)
 
 # Dependence
 ```Go
-
-func TestDependence(t *testing.T) {
+func TestDI(t *testing.T) {
 	type vars struct {
 		Age    uint
 		Name   string
@@ -27,12 +26,10 @@ func TestDependence(t *testing.T) {
 	expected.Logger = log.New(os.Stdout, "", log.LstdFlags)
 	expected.Vars = &vars{}
 
-	var d Dependencies
+	var d Injector
 	err := d.Provide(
 		expected.Grades,
-		struct {
-			Age uint
-		}{expected.Age},
+		Named("Age", expected.Age),
 		func() (s struct {
 			skip string
 			Skip string `dep:"-"`
@@ -40,23 +37,17 @@ func TestDependence(t *testing.T) {
 			return
 		},
 		func() *vars { return expected.Vars },
-		func() (*log.Logger, error) {
-			return expected.Logger, nil
-		},
-		func(logger *log.Logger) {
-
-		},
+		func() (*log.Logger, error) { return expected.Logger, nil },
+		func(logger *log.Logger) { /* do stuff */ },
 		func() (f struct{ First string }, l struct{ Last string }) {
 			f.First = expected.First
 			l.Last = expected.Last
 			return
 		},
-		func(
-			arg struct {
-				First string
-				Last  string
-			},
-		) (res struct{ Name string }) {
+		func(arg struct {
+			First string
+			Last  string
+		}) (res struct{ Name string }) {
 			res.Name = arg.First + " " + arg.Last
 			return
 		},
@@ -69,14 +60,12 @@ func TestDependence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var got vars
-	d.Inject(&got)
-	if !reflect.DeepEqual(expected, got) {
-		t.Fatal()
-	}
-	var logger *log.Logger
-	d.Inject(&logger)
-	if logger != expected.Logger {
+	var (
+		got    vars
+		logger *log.Logger
+	)
+	d.Inject(Decompose(&got), &logger)
+	if !reflect.DeepEqual(expected, got) || logger != expected.Logger {
 		t.Fatal()
 	}
 }

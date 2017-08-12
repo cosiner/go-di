@@ -1,4 +1,4 @@
-package goapp
+package di
 
 import (
 	"errors"
@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestDependence(t *testing.T) {
+func TestDI(t *testing.T) {
 	type vars struct {
 		Age    uint
 		Name   string
@@ -29,12 +29,10 @@ func TestDependence(t *testing.T) {
 	expected.Logger = log.New(os.Stdout, "", log.LstdFlags)
 	expected.Vars = &vars{}
 
-	var d Dependencies
+	var d Injector
 	err := d.Provide(
 		expected.Grades,
-		struct {
-			Age uint
-		}{expected.Age},
+		Named("Age", expected.Age),
 		func() (s struct {
 			skip string
 			Skip string `dep:"-"`
@@ -42,23 +40,17 @@ func TestDependence(t *testing.T) {
 			return
 		},
 		func() *vars { return expected.Vars },
-		func() (*log.Logger, error) {
-			return expected.Logger, nil
-		},
-		func(logger *log.Logger) {
-
-		},
+		func() (*log.Logger, error) { return expected.Logger, nil },
+		func(logger *log.Logger) { /* do stuff */ },
 		func() (f struct{ First string }, l struct{ Last string }) {
 			f.First = expected.First
 			l.Last = expected.Last
 			return
 		},
-		func(
-			arg struct {
-				First string
-				Last  string
-			},
-		) (res struct{ Name string }) {
+		func(arg struct {
+			First string
+			Last  string
+		}) (res struct{ Name string }) {
 			res.Name = arg.First + " " + arg.Last
 			return
 		},
@@ -71,20 +63,18 @@ func TestDependence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var got vars
-	d.Inject(&got)
-	if !reflect.DeepEqual(expected, got) {
-		t.Fatal()
-	}
-	var logger *log.Logger
-	d.Inject(&logger)
-	if logger != expected.Logger {
+	var (
+		got    vars
+		logger *log.Logger
+	)
+	d.Inject(Decompose(&got), &logger)
+	if !reflect.DeepEqual(expected, got) || logger != expected.Logger {
 		t.Fatal()
 	}
 }
 
-func TestDependenceError(t *testing.T) {
-	var d Dependencies
+func TestError(t *testing.T) {
+	var d Injector
 	err := d.Provide(func() int {
 		return 0
 	}, func(v uint) uint8 {
@@ -94,7 +84,7 @@ func TestDependenceError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d = Dependencies{}
+	d = Injector{}
 	err = d.Provide(func() (error, int) {
 		return errors.New("ERROR"), 0
 	})
@@ -106,7 +96,7 @@ func TestDependenceError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d = Dependencies{}
+	d = Injector{}
 	err = d.Provide(func() (error, error) {
 		return errors.New(""), nil
 	})
@@ -114,7 +104,7 @@ func TestDependenceError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d = Dependencies{}
+	d = Injector{}
 	d.Provide(func(l *log.Logger) *log.Logger {
 		return l
 	})
@@ -123,7 +113,7 @@ func TestDependenceError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d = Dependencies{}
+	d = Injector{}
 	d.Provide(
 		uint8(0),
 		func(uint8) {},
@@ -136,14 +126,14 @@ func TestDependenceError(t *testing.T) {
 	}
 
 	var n float64
-	d = Dependencies{}
+	d = Injector{}
 	if d.Inject(&n) == nil || d.Inject(n) == nil {
 		t.Fatal()
 	}
 }
 
 func TestAncestor(t *testing.T) {
-	var d Dependencies
+	var d Injector
 	err := d.Provide(func() uint {
 		return 1
 	}, func(u uint, i int) float64 {
@@ -169,7 +159,7 @@ func TestAncestor(t *testing.T) {
 }
 
 func TestDecompose(t *testing.T) {
-	var d = NewDependencies()
+	var d = New()
 	type Vars struct {
 		A uint
 		B int
@@ -180,7 +170,7 @@ func TestDecompose(t *testing.T) {
 		B: 2,
 		C: 3,
 	}
-	err := d.Provide(d.Decompose(expected))
+	err := d.Provide(Decompose(expected))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +187,7 @@ func TestDecompose(t *testing.T) {
 		t.Fatal()
 	}
 
-	d = NewDependencies()
+	d = New()
 	d.Provide(expected)
 	got = Vars{}
 	err = d.Inject(&got.A, &got.B, &got.C)
@@ -220,8 +210,8 @@ func (methodProvider) ProvideSum(arr []int) int {
 	return sum
 }
 
-func TestProvideMethods(t *testing.T) {
-	d := NewDependencies()
+func TestMethods(t *testing.T) {
+	d := New()
 	err := d.ProvideMethods(methodProvider{}, "Provide.*")
 	if err != nil {
 		t.Fatal(err)
@@ -240,12 +230,18 @@ func TestProvideMethods(t *testing.T) {
 	}
 }
 
-func TestInject(t *testing.T) {
-	d := NewDependencies()
-	d.Provide(d, d.Named("I1", 1), d.Named("I2", 2), d.Named("I3", 1), func(d *Dependencies) float64 {
-		d.Provide(uint8(9))
-		return 3
-	})
+func TestNamed(t *testing.T) {
+	d := New()
+	d.Provide(
+		d,
+		Named("I1", 2),
+		Named("I2", 2),
+		Named("I3", 2),
+		func(d *Injector) float64 {
+			d.Provide(uint8(2))
+			return 2
+		},
+	)
 	d.Run()
 
 	var (
@@ -253,12 +249,14 @@ func TestInject(t *testing.T) {
 		f          float64
 		u8         uint8
 	)
-	t.Log(d.Inject(
-		d.Named("I1", &i1),
-		d.Named("I2", &i2),
-		d.Named("I3", &i3),
+	d.Inject(
+		Named("I1", &i1),
+		Named("I2", &i2),
+		Named("I3", &i3),
 		&f,
 		&u8,
-	))
-	t.Log(i1, i2, i3, f, u8)
+	)
+	if i1 != 2 || i2 != 2 || i3 != 2 || f != 2 || u8 != 2 {
+		t.Fatal()
+	}
 }
