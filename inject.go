@@ -112,21 +112,21 @@ func (j *Injector) analyseFunc(name string, t reflect.Type, v reflect.Value) (*p
 	return &p, nil
 }
 
-func (j *Injector) analyseProvider(val interface{}) (*provider, error) {
-	o := parseOptionValue(val)
-	v := o.Value
+func (j *Injector) analyseProvider(opt optionValue) (*provider, error) {
+	v := opt.Value
 	t := v.Type()
 	p := &provider{
 		errorResolver: errorResolver{index: -1},
 	}
+	k := v.Kind()
 	switch {
-	case v.Kind() == reflect.Func:
-		fp, err := j.analyseFunc(o.Name, t, v)
+	case k == reflect.Func && !opt.FuncObj:
+		fp, err := j.analyseFunc(opt.Name, t, v)
 		if err != nil {
 			return nil, err
 		}
 		p = fp
-	case v.Kind() == reflect.Struct && (o.Decomposable || t.Name() == ""):
+	case k == reflect.Struct && (opt.Decomposable || t.Name() == ""):
 		ds, resolver := j.analyseStructure(t, p)
 		for i, d := range ds {
 			d.Val = v.Field(resolver.fields[i].fieldIndex)
@@ -135,7 +135,7 @@ func (j *Injector) analyseProvider(val interface{}) (*provider, error) {
 	default:
 		p.provides = append(p.provides, &dependency{
 			Type:     t,
-			Var:      o.Name,
+			Var:      opt.Name,
 			Val:      v,
 			Provider: p,
 		})
@@ -169,7 +169,7 @@ func (j *Injector) registerProvider(p *provider) error {
 	return nil
 }
 
-func (j *Injector) provide(v interface{}) error {
+func (j *Injector) provideVal(v optionValue) error {
 	p, err := j.analyseProvider(v)
 	if err != nil {
 		return err
@@ -177,36 +177,50 @@ func (j *Injector) provide(v interface{}) error {
 	return j.registerProvider(p)
 }
 
-func (j *Injector) ProvideMethods(v interface{}, pattern string) error {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-
-	if pattern == "" {
-		pattern = ".*"
-	}
-	matcher, err := regexp.Compile(pattern)
-	if err != nil {
-		return err
-	}
-
-	var (
-		refv = reflect.ValueOf(v)
-		reft = refv.Type()
-		l    = refv.Type().NumMethod()
-	)
-	for i := 0; i < l; i++ {
-		m := reft.Method(i)
-		if matcher.MatchString(m.Name) {
-			err = j.provide(optionValue{
-				Name:  functionName(m.Func),
-				Value: refv.Method(i),
-			})
+func (j *Injector) provide(v ...interface{}) error {
+	for _, arg := range v {
+		o := parseOptionValue(arg)
+		if o.MethodsPattern != "" {
+			methods, err := j.parseMethods(o.Value, o.MethodsPattern)
+			if err != nil {
+				return err
+			}
+			for _, m := range methods {
+				err = j.provideVal(m)
+				if err != nil {
+					return err
+				}
+			}
+		} else {
+			err := j.provideVal(o)
 			if err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+func (j *Injector) parseMethods(refv reflect.Value, pattern string) ([]optionValue, error) {
+	matcher, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, err
+	}
+	var (
+		providers []optionValue
+		reft      = refv.Type()
+		l         = refv.Type().NumMethod()
+	)
+	for i := 0; i < l; i++ {
+		m := reft.Method(i)
+		if matcher.MatchString(m.Name) {
+			providers = append(providers, optionValue{
+				Name:  functionName(m.Func),
+				Value: refv.Method(i),
+			})
+		}
+	}
+	return providers, nil
 }
 
 func (j *Injector) clearPendingProviders(v []interface{}) []interface{} {
@@ -221,18 +235,12 @@ func (j *Injector) Provide(v ...interface{}) error {
 	if atomic.LoadUint32(&j.running) == 0 {
 		j.mu.Lock()
 		defer j.mu.Unlock()
-
-		for _, arg := range j.clearPendingProviders(v) {
-			err := j.provide(arg)
-			if err != nil {
-				return err
-			}
-		}
-	} else {
-		j.pendingMu.Lock()
-		j.pendingProviders = append(j.pendingProviders, v...)
-		j.pendingMu.Unlock()
+		return j.provide(j.clearPendingProviders(v)...)
 	}
+
+	j.pendingMu.Lock()
+	j.pendingProviders = append(j.pendingProviders, v...)
+	j.pendingMu.Unlock()
 	return nil
 }
 
@@ -316,11 +324,9 @@ func (j *Injector) Run() error {
 		if len(providers) == 0 {
 			break
 		}
-		for _, p := range providers {
-			err := j.provide(p)
-			if err != nil {
-				return err
-			}
+		err = j.provide(providers...)
+		if err != nil {
+			return err
 		}
 	}
 	return nil

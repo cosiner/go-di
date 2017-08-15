@@ -32,7 +32,7 @@ func TestDI(t *testing.T) {
 	var d Injector
 	err := d.Provide(
 		expected.Grades,
-		Named("Age", expected.Age),
+		OptNamed("Age", expected.Age),
 		func() (s struct {
 			skip string
 			Skip string `dep:"-"`
@@ -67,7 +67,7 @@ func TestDI(t *testing.T) {
 		got    vars
 		logger *log.Logger
 	)
-	d.Inject(Decompose(&got), &logger)
+	d.Inject(OptDecompose(&got), &logger)
 	if !reflect.DeepEqual(expected, got) || logger != expected.Logger {
 		t.Fatal()
 	}
@@ -170,7 +170,7 @@ func TestDecompose(t *testing.T) {
 		B: 2,
 		C: 3,
 	}
-	err := d.Provide(Decompose(expected))
+	err := d.Provide(OptDecompose(expected))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func (methodProvider) ProvideSum(arr []int) int {
 
 func TestMethods(t *testing.T) {
 	d := New()
-	err := d.ProvideMethods(methodProvider{}, "Provide.*")
+	err := d.Provide(OptMethods(methodProvider{}, "Provide.*"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,9 +234,9 @@ func TestNamed(t *testing.T) {
 	d := New()
 	d.Provide(
 		d,
-		Named("I1", 2),
-		Named("I2", 2),
-		Named("I3", 2),
+		OptNamed("I1", 2),
+		OptNamed("I2", 2),
+		OptNamed("I3", 2),
 		func(d *Injector) float64 {
 			d.Provide(uint8(2))
 			return 2
@@ -250,13 +250,26 @@ func TestNamed(t *testing.T) {
 		u8         uint8
 	)
 	d.Inject(
-		Named("I1", &i1),
-		Named("I2", &i2),
-		Named("I3", &i3),
+		OptNamed("I1", &i1),
+		OptNamed("I2", &i2),
+		OptNamed("I3", &i3),
 		&f,
 		&u8,
 	)
 	if i1 != 2 || i2 != 2 || i3 != 2 || f != 2 || u8 != 2 {
+		t.Fatal()
+	}
+}
+
+func TestFuncObj(t *testing.T) {
+	type Fn func() int
+	inj := New()
+	inj.Provide(OptFuncObj(Fn(func() int { return 1 })))
+	inj.Run()
+
+	var f Fn
+	inj.Inject(&f)
+	if f() != 1 {
 		t.Fatal()
 	}
 }

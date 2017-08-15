@@ -183,8 +183,10 @@ func (e errorResolver) Resolve(out []reflect.Value) ([]reflect.Value, error) {
 }
 
 type optionValue struct {
-	Name         string
-	Decomposable bool
+	Name           string
+	Decomposable   bool
+	MethodsPattern string
+	FuncObj        bool
 
 	Value reflect.Value
 }
@@ -202,7 +204,7 @@ func parseOptionValue(v interface{}) optionValue {
 	}
 }
 
-func Decompose(v interface{}) interface{} {
+func OptDecompose(v interface{}) interface{} {
 	o := parseOptionValue(v)
 	if o.Decomposable {
 		return o
@@ -211,8 +213,23 @@ func Decompose(v interface{}) interface{} {
 	return o
 }
 
-func Named(name string, v interface{}) interface{} {
+func OptNamed(name string, v interface{}) interface{} {
 	o := parseOptionValue(v)
 	o.Name = name
+	return o
+}
+
+func OptMethods(v interface{}, pattern string) interface{} {
+	o := parseOptionValue(v)
+	if pattern == "" {
+		pattern = ".*"
+	}
+	o.MethodsPattern = pattern
+	return o
+}
+
+func OptFuncObj(v interface{}) interface{} {
+	o := parseOptionValue(v)
+	o.FuncObj = true
 	return o
 }
