@@ -6,6 +6,7 @@ Documentation can be found at [Godoc](https://godoc.org/github.com/cosiner/go-di
 
 # Dependence
 ```Go
+
 func TestDI(t *testing.T) {
 	type vars struct {
 		Age    uint
@@ -29,7 +30,7 @@ func TestDI(t *testing.T) {
 	var d Injector
 	err := d.Provide(
 		expected.Grades,
-		Named("Age", expected.Age),
+		OptNamed("Age", expected.Age),
 		func() (s struct {
 			skip string
 			Skip string `dep:"-"`
@@ -64,7 +65,7 @@ func TestDI(t *testing.T) {
 		got    vars
 		logger *log.Logger
 	)
-	d.Inject(Decompose(&got), &logger)
+	d.Inject(OptDecompose(&got), &logger)
 	if !reflect.DeepEqual(expected, got) || logger != expected.Logger {
 		t.Fatal()
 	}
