@@ -35,7 +35,7 @@ func ExampleInjector() {
 	// Output: 6
 }
 
-func ExampleOpt() {
+func Example() {
 	inj := New()
 
 	type User struct {
