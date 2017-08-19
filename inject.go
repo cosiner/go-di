@@ -1,3 +1,4 @@
+// Package di is a dependency injection library for Go.
 package di
 
 import (
