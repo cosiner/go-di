@@ -264,11 +264,20 @@ func TestNamed(t *testing.T) {
 func TestFuncObj(t *testing.T) {
 	type Fn func() int
 	inj := New()
-	inj.Provide(OptFuncObj(Fn(func() int { return 1 })))
-	inj.Run()
+	err := inj.Provide(OptFuncObj(Fn(func() int { return 1 })))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = inj.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	var f Fn
-	inj.Inject(&f)
+	err = inj.Inject(&f)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if f() != 1 {
 		t.Fatal()
 	}

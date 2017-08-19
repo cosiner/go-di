@@ -13,6 +13,7 @@ import (
 
 var errorReftype = reflect.TypeOf((*error)(nil)).Elem()
 
+// Injector implements the dependency injection.
 type Injector struct {
 	running uint32
 
@@ -24,6 +25,7 @@ type Injector struct {
 	pendingProviders []interface{}
 }
 
+// New create a injector instance.
 func New() *Injector {
 	return &Injector{
 		deps: make(dependencies),
@@ -231,6 +233,17 @@ func (j *Injector) clearPendingProviders(v []interface{}) []interface{} {
 	return v
 }
 
+// Provide provide value/function as providers, providers will be append to pending providers when injector is running,
+// and executed at next cycle, it's helpful for unavoidable dependencies.
+//
+// * Value is static dependency value, it will be decomposed only if it's a structure, and it's anonymous
+// or wrapped by OptDecompose.
+//
+// * Function is runnable provider, it depends on parameters and provide return values, empty parameters or providers is
+// allowed. Parameters and return values follow the same rules with static value. And function can return at most one error to indicate
+// the runtime error.
+//
+// Available option functions: all of OptDecompose, OptNamed, OptMethods, OptFuncObj.
 func (j *Injector) Provide(v ...interface{}) error {
 	if atomic.LoadUint32(&j.running) == 0 {
 		j.mu.Lock()
@@ -292,6 +305,9 @@ func (j *Injector) checkAllDeps() error {
 	return nil
 }
 
+// Run build a priority queue by the dependency graph, and execute each provider function, the error will
+// be returned for any providers.
+// Before it finished, all new providers will be marked as pending state, and be execute in next cycle.
 func (j *Injector) Run() error {
 	if !atomic.CompareAndSwapUint32(&j.running, 0, 1) {
 		return errors.New("dependencies is already running")
@@ -353,6 +369,9 @@ func (j *Injector) inject(v interface{}) error {
 	return r.Inject(o.Value, j.deps)
 }
 
+// Inject inject all resolved dependency values to destination pointers, it should be called
+// after running the injector.
+// Available option functions: all of OptDecompose, OptNamed.
 func (j *Injector) Inject(v ...interface{}) error {
 	j.mu.RLock()
 	defer j.mu.RUnlock()

@@ -117,6 +117,9 @@ func (d *dependency) Inject(v reflect.Value, deps dependencies) error {
 	if m == nil {
 		return d.notExistError("")
 	}
+	if !m.Val.IsValid() {
+		return d.notInitializedError("")
+	}
 	v.Set(m.Val)
 	return nil
 }
@@ -204,6 +207,7 @@ func parseOptionValue(v interface{}) optionValue {
 	}
 }
 
+// OptDecompose indicates that the structure should be decomposed, and each field as an dependency.
 func OptDecompose(v interface{}) interface{} {
 	o := parseOptionValue(v)
 	if o.Decomposable {
@@ -213,12 +217,17 @@ func OptDecompose(v interface{}) interface{} {
 	return o
 }
 
+// OptNamed specify the dependency name, it's useful to differ from dependencies with same type.
 func OptNamed(name string, v interface{}) interface{} {
 	o := parseOptionValue(v)
 	o.Name = name
 	return o
 }
 
+// OptMethods indicates that methods matchs the pattern are providers to be run, instead of the value
+// itself.
+// The pattern should be a valid regex expression or empty string to match all methods.
+// Due to the law of reflection in Go, only exported methods will be matched.
 func OptMethods(v interface{}, pattern string) interface{} {
 	o := parseOptionValue(v)
 	if pattern == "" {
@@ -228,6 +237,8 @@ func OptMethods(v interface{}, pattern string) interface{} {
 	return o
 }
 
+// OptFuncObj indicate that the function should be treated as a static dependency value, instead of a
+// runnable provider.
 func OptFuncObj(v interface{}) interface{} {
 	o := parseOptionValue(v)
 	o.FuncObj = true

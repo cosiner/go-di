@@ -1,11 +1,9 @@
-# go-di
-go-di is a library for [Go](https://golang.org) to do dependency injection. 
+package di
 
-# Documentation
-Documentation can be found at [Godoc](https://godoc.org/github.com/cosiner/go-di)
-
-# Example
-```Go
+import (
+	"fmt"
+	"log"
+)
 
 func ExampleInjector() {
 	inj := New()
@@ -72,7 +70,3 @@ func ExampleOpt() {
 	fmt.Println(nameFn(first, last))
 	//Output: F L
 }
-```
-
-# LICENSE
-MIT.
