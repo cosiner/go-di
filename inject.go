@@ -55,7 +55,7 @@ func (j *Injector) analyseStructure(t reflect.Type, provider *provider) ([]*depe
 		}
 		d := &dependency{
 			Type:     ft.Type,
-			Var:      ft.Name,
+			Var:      n,
 			Provider: provider,
 		}
 		deps = append(deps, d)
