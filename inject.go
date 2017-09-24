@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"go/ast"
 	"reflect"
 	"regexp"
 	"sync"
@@ -50,7 +49,7 @@ func (j *Injector) analyseStructure(t reflect.Type, provider *provider) ([]*depe
 		if n == "" {
 			n = ft.Name
 		}
-		if n == "" || (!ast.IsExported(n) && tag == "") {
+		if n == "" {
 			continue
 		}
 		d := &dependency{
