@@ -1,23 +1,46 @@
-package di
+package di_test
 
 import (
 	"fmt"
 	"log"
+	"net/http"
+
+	di "github.com/cosiner/go-di"
 )
 
-func ExampleInjector() {
-	inj := New()
+type DBConfig struct{}
+type DB struct{}
+type UserHandler struct{}
+type TopicHandler struct{}
+type Router struct{}
 
-	err := inj.Provide(
-		[]int{1, 2, 3},
-		func(v []int) int {
-			var sum int
-			for _, n := range v {
-				sum += n
-			}
-			return sum
-		},
-	)
+type Providers struct{}
+
+func (Providers) ProvideDBConfig() DBConfig {
+	return DBConfig{}
+}
+func (Providers) ProvideDB() (DB, error) {
+	return DB{}, nil
+}
+func (Providers) ProvideHandlers(db DB) (UserHandler, TopicHandler, error) {
+	return UserHandler{}, TopicHandler{}, nil
+}
+
+func (Providers) ProvideHttpHandler(args struct {
+	User  UserHandler
+	Topic TopicHandler
+}) (res struct {
+	Router  Router
+	Handler http.Handler
+}, err error) {
+	res.Router = Router{}
+	return res, nil
+}
+
+func ExampleInjector() {
+	inj := di.New()
+
+	err := inj.Provide(di.OptMethods(Providers{}, ""))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -25,48 +48,14 @@ func ExampleInjector() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	var sum int
-	err = inj.Inject(&sum)
+	var args struct {
+		Handler http.Handler
+	}
+	err = inj.Inject(&args)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Println(sum)
-	// Output: 6
-}
-
-func Example() {
-	inj := New()
-
-	type User struct {
-		FirstName string
-		LastName  string
-	}
-	type NameFn func(string, string) string
-	u := User{
-		"F", "L",
-	}
-	err := inj.Provide(
-		OptDecompose(u),
-		OptFuncObj(NameFn(func(f, l string) string {
-			return f + " " + l
-		})),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-	var (
-		first, last string
-		nameFn      NameFn
-	)
-	err = inj.Inject(
-		OptNamed("FirstName", &first),
-		OptNamed("LastName", &last),
-		&nameFn,
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(nameFn(first, last))
-	//Output: F L
+	fmt.Println(args.Handler == nil)
+	// Output: true
 }
