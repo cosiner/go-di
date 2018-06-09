@@ -30,6 +30,7 @@ func TestDI(t *testing.T) {
 	expected.Vars = &vars{}
 
 	var d Injector
+	d.UseRunner(AsyncRunner())
 	err := d.Provide(
 		expected.Grades,
 		OptNamed("Age", expected.Age),
@@ -50,7 +51,7 @@ func TestDI(t *testing.T) {
 		func(arg struct {
 			First string
 			Last  string
-		}) (res struct{ Name string }) {
+		}) (res struct{ Name string }, err error) {
 			res.Name = arg.First + " " + arg.Last
 			return
 		},

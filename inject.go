@@ -2,13 +2,13 @@
 package di
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 var errorReftype = reflect.TypeOf((*error)(nil)).Elem()
@@ -23,6 +23,9 @@ type Injector struct {
 
 	pendingMu        sync.Mutex
 	pendingProviders []interface{}
+
+	runner Runner
+	logger Logger
 }
 
 // New create a injector instance.
@@ -30,6 +33,16 @@ func New() *Injector {
 	return &Injector{
 		deps: make(dependencies),
 	}
+}
+
+func (j *Injector) UseRunner(r Runner) *Injector {
+	j.runner = r
+	return j
+}
+
+func (j *Injector) UseLogger(l Logger) *Injector {
+	j.logger = l
+	return j
 }
 
 func (j *Injector) analyseStructure(t reflect.Type, provider *provider) ([]*dependency, *structure) {
@@ -272,7 +285,7 @@ func (j *Injector) runProvider(p *provider) error {
 	out := p.fn.Call(in)
 	out, reterr := p.errorResolver.Resolve(out)
 	if reterr != nil {
-		return fmt.Errorf("provider %s failed with error: %s", p.name, reterr.Error())
+		return reterr
 	}
 	for i := range out {
 		err := p.provideResolvers[i].Resolve(j.deps, out[i])
@@ -285,24 +298,18 @@ func (j *Injector) runProvider(p *provider) error {
 }
 
 func (j *Injector) checkAllDeps() error {
-	var buf bytes.Buffer
+	var errs providerErrors
 	for _, p := range j.providers {
 		if p.done() {
 			continue
 		}
 		for _, dep := range p.deps {
 			if j.deps.match(dep) == nil {
-				if buf.Len() > 0 {
-					fmt.Fprintln(&buf)
-				}
-				fmt.Fprint(&buf, dep.notExistError(p.name))
+				errs.Append(p.name, fmt.Errorf("dependency not found: %s", dep.String()))
 			}
 		}
 	}
-	if buf.Len() > 0 {
-		return errors.New(buf.String())
-	}
-	return nil
+	return errs.ToError()
 }
 
 // Run build a priority queue by the dependency graph, and execute each provider function, the error will
@@ -313,12 +320,19 @@ func (j *Injector) Run() error {
 		return errors.New("dependencies is already running")
 	}
 
+	runner := j.runner
+	if runner == nil {
+		runner = SyncRunner()
+	}
+	logger := j.logger
+	if logger == nil {
+		logger = nopLogger{}
+	}
 	j.mu.Lock()
 	defer func() {
 		j.mu.Unlock()
 		atomic.StoreUint32(&j.running, 0)
 	}()
-
 	for {
 		err := j.checkAllDeps()
 		if err != nil {
@@ -329,11 +343,24 @@ func (j *Injector) Run() error {
 		if err != nil {
 			return err
 		}
+
 		for _, n := range queue {
-			err = j.runProvider(n.provider)
+			p := n.provider
+			err = runner.run(j, p, func() error {
+				begin := time.Now()
+				logger.Begin(p.name, begin)
+				err = j.runProvider(p)
+				end := time.Now()
+				logger.End(p.name, end, end.Sub(begin))
+				return err
+			})
 			if err != nil {
 				return err
 			}
+		}
+		err = runner.waitDone()
+		if err != nil {
+			return err
 		}
 
 		providers := j.clearPendingProviders(nil)
