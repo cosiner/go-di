@@ -33,7 +33,7 @@ type Providers struct{}
 func (Providers) ProvideDBConfig() DBConfig {
 	return DBConfig{}
 }
-func (Providers) ProvideDB() (DB, error) {
+func (Providers) ProvideDB(config DBConfig) (DB, error) {
 	return DB{}, nil
 }
 func (Providers) ProvideHandlers(db DB) (UserHandler, TopicHandler, error) {
