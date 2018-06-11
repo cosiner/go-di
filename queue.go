@@ -3,7 +3,29 @@ package di
 import (
 	"fmt"
 	"sort"
+	"sync"
 )
+
+type providerDones struct {
+	dones map[*provider]struct{}
+	mu    sync.RWMutex
+}
+
+func (p *providerDones) isDone(prov *provider) bool {
+	p.mu.RLock()
+	_, has := p.dones[prov]
+	p.mu.RUnlock()
+	return has
+}
+
+func (p *providerDones) markDone(prov *provider) {
+	p.mu.Lock()
+	if p.dones == nil {
+		p.dones = make(map[*provider]struct{})
+	}
+	p.dones[prov] = struct{}{}
+	p.mu.Unlock()
+}
 
 type queueNode struct {
 	provider *provider
@@ -35,9 +57,9 @@ func (q *queue) append(p *provider) *queueNode {
 	return n
 }
 
-func (q *queue) add(p *provider, context []string) (*queueNode, error) {
+func (q *queue) add(p *provider, context []string, dones *providerDones) (*queueNode, error) {
 	node := q.search(p)
-	if p.done() {
+	if dones.isDone(p) {
 		return node, nil
 	}
 
@@ -60,7 +82,7 @@ func (q *queue) add(p *provider, context []string) (*queueNode, error) {
 		if mod == nil {
 			return nil, dep.notExistError(p.name)
 		}
-		parent, err = q.add(mod.Provider, context)
+		parent, err = q.add(mod.Provider, context, dones)
 		if err != nil {
 			return nil, err
 		}
@@ -84,7 +106,7 @@ func (q *queue) Swap(i, j int) {
 	q.nodes[i], q.nodes[j] = q.nodes[j], q.nodes[i]
 }
 
-func newQueue(providers []*provider, mods dependencies) ([]*queueNode, error) {
+func newQueue(providers []*provider, mods dependencies, dones *providerDones) ([]*queueNode, error) {
 	var (
 		queue = queue{
 			deps: mods,
@@ -92,7 +114,7 @@ func newQueue(providers []*provider, mods dependencies) ([]*queueNode, error) {
 		err error
 	)
 	for _, p := range providers {
-		_, err = queue.add(p, nil)
+		_, err = queue.add(p, nil, dones)
 		if err != nil {
 			return nil, err
 		}

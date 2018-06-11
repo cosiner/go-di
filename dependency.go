@@ -35,14 +35,6 @@ type (
 	}
 )
 
-func (p *provider) done() bool {
-	return !p.fn.IsValid()
-}
-
-func (p *provider) markDone() {
-	p.fn = reflect.Value{}
-}
-
 func (m dependencies) match(d *dependency) *dependency {
 	deps := m[d.Type]
 	l := len(deps)

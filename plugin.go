@@ -51,7 +51,6 @@ type asyncRunner struct {
 func AsyncRunner() Runner {
 	return &asyncRunner{
 		providerDones: make(map[*provider]chan struct{}),
-		closeCh:       make(chan struct{}),
 	}
 }
 
@@ -80,6 +79,7 @@ func (a *asyncRunner) doCloseCh(ch chan struct{}) {
 		close(ch)
 	}
 }
+
 func (a *asyncRunner) finishProvider(p *provider, err error) {
 	a.mu.Lock()
 	c := a.getOrCreateDoneCh(p)
@@ -96,6 +96,11 @@ func (a *asyncRunner) finishProvider(p *provider, err error) {
 func (a *asyncRunner) run(j *Injector, p *provider, fn func() error) error {
 	a.wg.Add(1)
 
+	a.mu.Lock()
+	if a.closeCh == nil {
+		a.closeCh = make(chan struct{})
+	}
+	a.mu.Unlock()
 	go func() {
 		defer func() {
 			if err := recover(); err != nil {
@@ -111,7 +116,7 @@ func (a *asyncRunner) run(j *Injector, p *provider, fn func() error) error {
 		for _, dep := range p.deps {
 			dp := j.deps.match(dep)
 			if dp == nil || dp.Provider == nil {
-				a.finishProvider(p, dep.notExistError(""))
+				a.finishProvider(p, dep.notExistError(p.name))
 				return
 			}
 			select {
@@ -129,7 +134,10 @@ func (a *asyncRunner) run(j *Injector, p *provider, fn func() error) error {
 func (a *asyncRunner) waitDone() error {
 	a.wg.Wait()
 	a.mu.Lock()
-	a.doCloseCh(a.closeCh)
+	if a.closeCh != nil {
+		a.doCloseCh(a.closeCh)
+		a.closeCh = nil
+	}
 	for _, c := range a.providerDones {
 		a.doCloseCh(c)
 	}

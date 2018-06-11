@@ -26,6 +26,7 @@ type Injector struct {
 
 	runner Runner
 	logger Logger
+	dones  providerDones
 }
 
 // New create a injector instance.
@@ -271,9 +272,10 @@ func (j *Injector) Provide(v ...interface{}) error {
 }
 
 func (j *Injector) runProvider(p *provider) error {
-	if p.done() {
+	if !p.fn.IsValid() {
 		return nil
 	}
+
 	in := make([]reflect.Value, 0, len(p.depParsers))
 	for _, dp := range p.depParsers {
 		v, err := dp.Parse(j.deps)
@@ -293,16 +295,12 @@ func (j *Injector) runProvider(p *provider) error {
 			return err
 		}
 	}
-	p.markDone()
 	return nil
 }
 
 func (j *Injector) checkAllDeps() error {
 	var errs providerErrors
 	for _, p := range j.providers {
-		if p.done() {
-			continue
-		}
 		for _, dep := range p.deps {
 			if j.deps.match(dep) == nil {
 				errs.Append(p.name, fmt.Errorf("dependency not found: %s", dep.String()))
@@ -333,13 +331,14 @@ func (j *Injector) Run() error {
 		j.mu.Unlock()
 		atomic.StoreUint32(&j.running, 0)
 	}()
+
 	for {
 		err := j.checkAllDeps()
 		if err != nil {
 			return err
 		}
 
-		queue, err := newQueue(j.providers, j.deps)
+		queue, err := newQueue(j.providers, j.deps, &j.dones)
 		if err != nil {
 			return err
 		}
@@ -348,10 +347,17 @@ func (j *Injector) Run() error {
 			p := n.provider
 			err = runner.run(j, p, func() error {
 				begin := time.Now()
-				logger.Begin(p.name, begin)
+				if p.name != "" {
+					logger.Begin(p.name, begin)
+				}
 				err = j.runProvider(p)
-				end := time.Now()
-				logger.End(p.name, end, end.Sub(begin))
+				if err == nil {
+					end := time.Now()
+					if p.name != "" {
+						logger.End(p.name, end, end.Sub(begin))
+					}
+					j.dones.markDone(p)
+				}
 				return err
 			})
 			if err != nil {
