@@ -131,6 +131,12 @@ func (j *Injector) analyseFunc(name string, t reflect.Type, v reflect.Value) (*p
 func (j *Injector) analyseProvider(opt optionValue) (*provider, error) {
 	v := opt.Value
 	t := v.Type()
+	if opt.Type != nil {
+		if !t.AssignableTo(opt.Type) {
+			return nil, fmt.Errorf("incompatible type: %s to %s", t, opt.Type)
+		}
+		t = opt.Type
+	}
 	p := &provider{
 		errorResolver: errorResolver{index: -1},
 	}

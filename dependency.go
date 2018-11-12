@@ -182,6 +182,7 @@ type optionValue struct {
 	Decomposable   bool
 	MethodsPattern string
 	FuncObj        bool
+	Type           reflect.Type
 
 	Value reflect.Value
 }
@@ -234,5 +235,12 @@ func OptMethods(v interface{}, pattern string) interface{} {
 func OptFuncObj(v interface{}) interface{} {
 	o := parseOptionValue(v)
 	o.FuncObj = true
+	return o
+}
+
+// OptTyped use specified type as provided instead of reflect.TypeOf on value, it's useful for provide interface and type alias.
+func OptTyped(v interface{}, t reflect.Type) interface{} {
+	o := parseOptionValue(v)
+	o.Type = t
 	return o
 }
