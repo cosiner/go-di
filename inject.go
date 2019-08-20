@@ -4,6 +4,7 @@ package di
 import (
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"regexp"
 	"sync"
@@ -34,6 +35,18 @@ func New() *Injector {
 	return &Injector{
 		deps: make(dependencies),
 	}
+}
+
+func NewAndParseEnv(prefix string) *Injector {
+	inj := New()
+
+	if os.Getenv(prefix+"DI_SYNC") == "true" {
+		inj.UseRunner(syncRunner{})
+	}
+	if os.Getenv(prefix+"DI_LOG") == "true" {
+		inj.UseLogger(DefaultLogger{})
+	}
+	return inj
 }
 
 func (j *Injector) UseRunner(r Runner) *Injector {

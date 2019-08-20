@@ -2,6 +2,7 @@ package di
 
 import (
 	"fmt"
+	"log"
 	"runtime"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ type Logger interface {
 	Begin(name string, at time.Time)
 	End(name string, at time.Time, dur time.Duration)
 }
+
 type nopLogger struct{}
 
 func (nopLogger) Begin(name string, at time.Time)                  {}
@@ -144,4 +146,14 @@ func (a *asyncRunner) waitDone() error {
 	err := a.errors.ToError()
 	a.mu.Unlock()
 	return err
+}
+
+type DefaultLogger struct{}
+
+func (DefaultLogger) Begin(name string, at time.Time) {
+	log.Printf("Begin %s\n", name)
+}
+
+func (DefaultLogger) End(name string, at time.Time, dur time.Duration) {
+	log.Printf("End %s - %s\n", name, dur)
 }
